@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 
-import cv2
 import keyboard
 import mouse
 import numpy as np
@@ -31,7 +30,7 @@ CONFIG_FILE = "config.json"
 AUTO_QUIT_AFTER_SECONDS = 300
 PROCESS_QUEUE_INTERVAL_MS = 100
 OVERLAY_UPDATE_INTERVAL_MS = 100
-ICON_CHECK_INTERVAL_MS = 500
+ICON_CHECK_INTERVAL_MS = 250
 TIMER_TICK_INTERVAL_MS = 100
 PREVIEW_DURATION_MS = 2000
 
@@ -213,12 +212,11 @@ class OverlayApp:
         # BitBlt で取得できる画像は、テスト結果に合わせて100%基準座標で扱う。
         self.icon_search_x = 20
         self.icon_search_y = 101
-        self.icon_search_w = 200
-        self.icon_search_h = 10
-        self.icon_search_margin_x = 0
-        self.icon_search_margin_y = 0
+        self.icon_width = 10
+        self.icon_height = 10
+        self.icon_gap = 2
+        self.icon_slot_count = 20
         self.icon_check_interval_ms = ICON_CHECK_INTERVAL_MS
-        self.threshold = 0.90
 
     def _init_state(self):
         self.target_time = 0
@@ -550,13 +548,19 @@ class OverlayApp:
 
     def reload_templates(self):
         self.templates = []
-        for path in self.icon_paths:
+        for idx, path in enumerate(self.icon_paths):
             if not os.path.exists(path):
                 continue
             try:
                 with Image.open(path) as img:
                     rgb = np.array(img.convert("RGB"))
-                    self.templates.append(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+                    if rgb.shape != (self.icon_height, self.icon_width, 3):
+                        raise ValueError("Icon must be 10x10 pixels")
+                    mask = np.any(rgb != 0, axis=2)
+                    if not np.any(mask):
+                        raise ValueError("Icon must contain non-black pixels")
+                    # Preserve the filename index even if an earlier file cannot be loaded.
+                    self.templates.append((idx, rgb, mask))
             except Exception as e:
                 print(f"Template load error: {path}: {e}")
 
@@ -2005,13 +2009,9 @@ class OverlayApp:
             return True
 
     def _get_icon_search_regions(self):
-        margin_x = int(self.icon_search_margin_x)
-        margin_y = int(self.icon_search_margin_y)
-        src_x = max(0, int(self.icon_search_x) - margin_x)
-        src_y = max(0, int(self.icon_search_y) - margin_y)
-        width = int(self.icon_search_w) + margin_x * 2
-        height = int(self.icon_search_h) + margin_y * 2
-        return [{"src_rect": (src_x, src_y, width, height)}]
+        # Capture once, then compare only the 20 fixed icon slots inside this strip.
+        width = self.icon_slot_count * self.icon_width + (self.icon_slot_count - 1) * self.icon_gap
+        return [{"src_rect": (self.icon_search_x, self.icon_search_y, width, self.icon_height)}]
 
     def _capture_windowdc_region_bgr(self, src_x, src_y, width, height):
         hwnd_dc = None
@@ -2075,14 +2075,18 @@ class OverlayApp:
 
     def _find_matching_icon_index(self, frame_bgr):
         frame_h, frame_w = frame_bgr.shape[:2]
-        for idx, template in enumerate(self.templates):
-            th, tw = template.shape[:2]
-            if tw > frame_w or th > frame_h:
-                continue
+        if frame_h < self.icon_height:
+            return None
 
-            res = cv2.matchTemplate(frame_bgr, template, cv2.TM_CCOEFF_NORMED)
-            if cv2.minMaxLoc(res)[1] >= self.threshold:
-                return idx
+        for slot in range(self.icon_slot_count):
+            x = slot * (self.icon_width + self.icon_gap)
+            if x + self.icon_width > frame_w:
+                break
+            # BitBlt returns BGR; compare RGB without resizing or color tolerance.
+            icon_rgb = frame_bgr[:self.icon_height, x:x + self.icon_width, ::-1]
+            for idx, template_rgb, mask in self.templates:
+                if np.array_equal(icon_rgb[mask], template_rgb[mask]):
+                    return idx
         return None
 
     def _start_detected_icon_timer(self, idx):
@@ -2305,17 +2309,17 @@ if __name__ == "__main__":
         "xtWin32WindowBase",
         "チョコットランド",
         {
-            "bell.dat": 297,
-            "juda.dat": 9,
-            "eru.dat": 300,
-            "retro.dat": 300,
-            "shira.dat": 300,
-            "fiss.dat": 300,
-            "bene.dat": 300,
-            "renamana.dat": 300,
-            "riarie.dat": 300,
-            "roya.dat": 300,
-            "code.dat": 90,
+            "f1.dat": 297,
+            "f2.dat": 9,
+            "f3.dat": 300,
+            "f4.dat": 300,
+            "f5.dat": 300,
+            "f6.dat": 300,
+            "f7.dat": 300,
+            "f8.dat": 300,
+            "f9.dat": 300,
+            "f10.dat": 300,
+            "f11.dat": 90,
         },
         default_hotkeys,
     )
