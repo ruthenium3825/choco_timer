@@ -297,6 +297,7 @@ class OverlayApp:
         self.hotkey_config = default_hotkeys
         self.auto_start_enabled = True
         self.hotkey_enabled = True
+        self.typing_mode_enabled = True
 
         if not os.path.exists(CONFIG_FILE):
             return
@@ -312,6 +313,7 @@ class OverlayApp:
         self.hotkey_config = {**default_hotkeys, **loaded_hotkeys}
         self.auto_start_enabled = saved_data.get("auto_start", True)
         self.hotkey_enabled = saved_data.get("hotkey_enabled", True)
+        self.typing_mode_enabled = saved_data.get("typing_mode_enabled", True)
         self.scale = saved_data.get("scale", 1.0)
         self.origin_y = saved_data.get("origin_y", 114)
         self.presets = saved_data.get("presets", [300, 600, 1800, 3600])
@@ -341,6 +343,7 @@ class OverlayApp:
             "hotkeys": self.hotkey_config,
             "auto_start": self.auto_start_enabled,
             "hotkey_enabled": self.hotkey_enabled,
+            "typing_mode_enabled": self.typing_mode_enabled,
             "scale": self.scale,
             "origin_y": self.origin_y,
             "presets": self.presets,
@@ -1582,6 +1585,8 @@ class OverlayApp:
             self.overlay.after(0, action)
 
     def _handle_enter_key(self):
+        if not self.typing_mode_enabled:
+            return
         if self.target_hwnd and win32gui.GetForegroundWindow() == self.target_hwnd:
             if not self.is_typing_mode:
                 self.is_typing_mode = True
@@ -1747,6 +1752,7 @@ class OverlayApp:
             ),
             pystray.Menu.SEPARATOR,
             item("ショートカットキー有効", self.toggle_hotkeys, checked=lambda _: self.hotkey_enabled),
+            item("タイピングモード有効", self.toggle_typing_mode, checked=lambda _: self.typing_mode_enabled),
             item("タイマー自動スタート有効", self.toggle_auto_start, checked=lambda _: self.auto_start_enabled),
             item("カウンターを表示", self.toggle_counter, checked=lambda _: self.counter_enabled),
             pystray.Menu.SEPARATOR,
@@ -1790,6 +1796,14 @@ class OverlayApp:
     def toggle_hotkeys(self, icon=None, menu_item=None):
         self.hotkey_enabled = not self.hotkey_enabled
         self.setup_hooks()
+        self.save_config()
+        self.refresh_tray_menu()
+
+    def toggle_typing_mode(self, icon=None, menu_item=None):
+        self.typing_mode_enabled = not self.typing_mode_enabled
+        if not self.typing_mode_enabled:
+            self.is_typing_mode = False
+            self.overlay.after(0, self.draw_timer)
         self.save_config()
         self.refresh_tray_menu()
 

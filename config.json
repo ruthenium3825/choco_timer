@@ -1,0 +1,30 @@
+{
+    "hotkeys": {
+        "add_timer": "t",
+        "reset_timer": "r",
+        "reset_all_timers": "ctrl+r",
+        "move_cursor": "tab",
+        "prev_preset": ",",
+        "next_preset": ".",
+        "inc_counter1": "z",
+        "dec_counter1": "shift+z",
+        "reset_counter1": "ctrl+z",
+        "inc_counter2": "x",
+        "dec_counter2": "shift+x",
+        "reset_counter2": "ctrl+x"
+    },
+    "auto_start": true,
+    "hotkey_enabled": true,
+    "typing_mode_enabled": false,
+    "scale": 1.0,
+    "origin_y": 114,
+    "presets": [
+        300,
+        600,
+        1800,
+        3600
+    ],
+    "counter_enabled": false,
+    "sound_enabled": true,
+    "volume_level": 35
+}
