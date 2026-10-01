@@ -1879,13 +1879,17 @@ class OverlayApp:
                 anchor="nw",
             )
 
+    def _icon_row_y(self, y):
+        # 10px icons begin one reference pixel above the unchanged 9px digits.
+        return y - self.get_effective_scale() - getattr(self, "dpi_scale", 1.0)
+
     def draw_timer(self):
         self.canvas.delete("all")
         s = self.get_effective_scale()
         bx, by = self._overlay_base_position()
 
         if self.is_typing_mode:
-            self._draw_image(bx, by, "keyboard")
+            self._draw_image(bx, by - getattr(self, "dpi_scale", 1.0), "keyboard")
 
         draw_y = by + 1 * s
         if self.preview_timer_id and self.presets:
@@ -1907,13 +1911,13 @@ class OverlayApp:
 
         if self.stopwatch_started_at is not None:
             if self.selected_cursor_index == STOPWATCH_CURSOR_INDEX:
-                self._draw_image(bx + (self.cursor_offset_x * s), draw_y - 1 * s, "cursor")
+                self._draw_image(bx + (self.cursor_offset_x * s), self._icon_row_y(draw_y), "cursor")
             self._render_stopwatch_time_images(bx + (self.timer_offset_x * s), draw_y)
             draw_y += self.base_timer_spacing * s
 
         if self.is_counting:
             if self.selected_cursor_index == 0:
-                self._draw_image(bx + (self.cursor_offset_x * s), draw_y - 1 * s, "cursor")
+                self._draw_image(bx + (self.cursor_offset_x * s), self._icon_row_y(draw_y), "cursor")
             self._render_feather_time_images(
                 self.feather_timer,
                 bx + (self.timer_offset_x * s),
@@ -1923,7 +1927,7 @@ class OverlayApp:
 
         for index, timer in enumerate(self.timers):
             if self.selected_cursor_index == (index + 1):
-                self._draw_image(bx + (self.cursor_offset_x * s), draw_y - 1 * s, "cursor")
+                self._draw_image(bx + (self.cursor_offset_x * s), self._icon_row_y(draw_y), "cursor")
             self._render_time_images(timer["seconds"], bx + (self.timer_offset_x * s), draw_y)
             draw_y += self.base_timer_spacing * s
 
@@ -1946,39 +1950,41 @@ class OverlayApp:
 
     def _render_feather_time_images(self, total_seconds, x, y):
         s = self.get_effective_scale()
-        self._draw_image(x - 1 * s, y - 1 * s, "feather")
+        self._draw_image(x - 1 * s, self._icon_row_y(y), "feather")
         digits = self._time_digits(total_seconds)
         self._draw_digit_row(x, y, digits, [11 + i * 7 for i in range(len(digits))])
 
     def _render_select_time_images(self, total_seconds, x, y):
         s = self.get_effective_scale()
-        self._draw_image(x + 2 * s, y - 1 * s, "left")
+        self._draw_image(x - 1 * s, self._icon_row_y(y), "left")
         digits = self._time_digits(total_seconds)
         self._draw_digit_row(
             x,
             y,
-            digits + ["right"],
-            [11 + i * 7 for i in range(len(digits))] + [13 + len(digits) * 7],
+            digits,
+            [11 + i * 7 for i in range(len(digits))],
         )
+        self._draw_image(x + (13 + len(digits) * 7) * s, self._icon_row_y(y), "right")
 
     def _render_time_images(self, total_seconds, x, y):
-        self._draw_image(x, y, "clock")
+        s = self.get_effective_scale()
+        self._draw_image(x - 1 * s, self._icon_row_y(y), "clock")
         digits = self._time_digits(total_seconds)
         self._draw_digit_row(x, y, digits, [11 + i * 7 for i in range(len(digits))])
 
     def _render_stopwatch_time_images(self, x, y):
         s = self.get_effective_scale()
-        self._draw_image(x - 1 * s, y - 1 * s, "stopwatch")
+        self._draw_image(x - 1 * s, self._icon_row_y(y), "stopwatch")
         digits = self._time_digits(self.stopwatch_elapsed_seconds())
         self._draw_digit_row(x, y, digits, [11 + i * 7 for i in range(len(digits))])
-        lap_x = x + (11 + len(digits) * 7 + 4) * s
+        lap_x = x + (11 + len(digits) * 7 + 2) * s
 
         # Keep the newest laps visible on the same row when the window fills up.
         available_width = max(0, self.canvas.winfo_width() - lap_x)
         visible_laps = []
         for lap in reversed(self.stopwatch_laps):
             lap_digits = self._time_digits(int(lap))
-            lap_width = (9 + len(lap_digits) * 7 + 4) * s
+            lap_width = (9 + len(lap_digits) * 7 + 2) * s
             if lap_width > available_width:
                 break
             visible_laps.append((lap_digits, lap_width))
@@ -1990,7 +1996,7 @@ class OverlayApp:
 
     def _render_counter_images(self, c1, c2, x, y):
         s = self.get_effective_scale()
-        self._draw_image(x, y, "counter")
+        self._draw_image(x, self._icon_row_y(y), "counter")
         for index, digit in enumerate(f"{c1:04d}"):
             self._draw_image(x + (12 + index * 7) * s, y - 1 * s, digit)
         self._draw_image(x + 42 * s, y - 1 * s, "slash")
