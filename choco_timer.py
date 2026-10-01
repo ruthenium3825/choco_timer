@@ -26,6 +26,9 @@ import tkinter as tk
 
 
 CONFIG_FILE = "config.json"
+DEFAULT_PRESETS = [300, 600, 1800, 3600, 0]
+STOPWATCH_CURSOR_INDEX = -1
+MAX_STOPWATCH_LAPS = 3
 
 AUTO_QUIT_AFTER_SECONDS = 300
 PROCESS_QUEUE_INTERVAL_MS = 100
@@ -36,6 +39,7 @@ PREVIEW_DURATION_MS = 2000
 
 DEFAULT_UI_ASSETS = [
     "clock",
+    "stopwatch",
     "colon",
     "counter",
     "slash",
@@ -54,10 +58,11 @@ DEFAULT_SOUND_NAMES = [
     "counter",
     "enter",
     "cancel",
+    "rap",
 ]
 
 HOTKEY_ACTION_LABELS = [
-    ("add_timer", "タイマースタート"),
+    ("add_timer", "タイマースタート / ラップ"),
     ("reset_timer", "タイマーリセット"),
     ("reset_all_timers", "全タイマーリセット"),
     ("move_cursor", "リセットカーソル移動"),
@@ -223,6 +228,10 @@ class OverlayApp:
         self.feather_timer = 0
         self.is_counting = False
         self.timers = []
+        self.stopwatch_started_at = None
+        self.stopwatch_last_lap_at = None
+        self.stopwatch_laps = []
+        self.pressed_key_scan_codes = set()
         self.counter1 = 0
         self.counter2 = 0
         self.target_hwnd = None
@@ -287,7 +296,7 @@ class OverlayApp:
     def load_config(self, default_hotkeys):
         self.scale = 1.0
         self.origin_y = 114
-        self.presets = [300, 600, 1800, 3600]
+        self.presets = list(DEFAULT_PRESETS)
         self.counter_enabled = False
         self.sound_enabled = True
         self.volume_level = 35
@@ -314,7 +323,7 @@ class OverlayApp:
         self.typing_mode_enabled = saved_data.get("typing_mode_enabled", True)
         self.scale = saved_data.get("scale", 1.0)
         self.origin_y = saved_data.get("origin_y", 114)
-        self.presets = saved_data.get("presets", [300, 600, 1800, 3600])
+        self.presets = saved_data.get("presets", list(DEFAULT_PRESETS))
         self.counter_enabled = saved_data.get("counter_enabled", False)
         self.sound_enabled = saved_data.get("sound_enabled", True)
         self.volume_level = saved_data.get("volume_level", 35)
@@ -1402,7 +1411,7 @@ class OverlayApp:
         result = {"action": None, "value": None}
         self._prepare_dialog_owner()
         dialog = tk.Toplevel(self.root)
-        width, height = 460, 285
+        width, height = 460, 400
         self._configure_dialog_base(dialog, "プリセット編集", width, height)
         panel = self._make_dialog_panel(dialog)
 
@@ -1415,7 +1424,8 @@ class OverlayApp:
         )
         self._dialog_label(
             panel,
-            "秒数で入力してください。プリセットの削除をする場合は左下の「削除」ボタンを押してください。",
+            self._preset_input_description()
+            + "\nプリセットを削除する場合は左下の「削除」ボタンを押してください。",
             fg=DIALOG_MUTED_FG,
             pady=(0, 14),
             wraplength=390,
@@ -1519,15 +1529,14 @@ class OverlayApp:
         try:
             val = int(new_val)
         except ValueError:
-            self._show_notice_dialog("入力エラー", "数字で入力してください", "1〜5999の範囲で秒数を入力してください。", danger=True)
+            self._show_notice_dialog("入力エラー", "数字で入力してください", "0〜5999の範囲で秒数を入力してください。0秒はストップウォッチです。", danger=True)
             return
 
-        if val < 1 or val > 5999:
-            self._show_notice_dialog("入力エラー", "範囲外です", "1〜5999の範囲で入力してください。削除する場合は削除ボタンを押してください。", danger=True)
+        if val < 0 or val > 5999:
+            self._show_notice_dialog("入力エラー", "範囲外です", "0〜5999の範囲で入力してください。削除する場合は削除ボタンを押してください。", danger=True)
             return
 
         self.presets[index] = val
-        self.presets.sort()
         self.save_config()
         self.refresh_tray_menu()
         self.root.withdraw()
@@ -1536,10 +1545,11 @@ class OverlayApp:
         new_val = self._show_text_input_dialog(
             title="プリセット追加",
             heading="新しいタイマー時間",
-            description="追加する時間を秒数で入力してください。1〜5999秒まで指定できます。",
+            description=self._preset_input_description(),
             initial_value="300",
             confirm_text="追加",
             allow_blank=False,
+            height=365,
         )
 
         if new_val is None:
@@ -1548,15 +1558,14 @@ class OverlayApp:
         try:
             val = int(new_val)
         except ValueError:
-            self._show_notice_dialog("入力エラー", "数字で入力してください", "1〜5999の範囲で秒数を入力してください。", danger=True)
+            self._show_notice_dialog("入力エラー", "数字で入力してください", "0〜5999の範囲で秒数を入力してください。0秒はストップウォッチです。", danger=True)
             return
 
-        if val < 1 or val > 5999:
-            self._show_notice_dialog("入力エラー", "範囲外です", "1〜5999の範囲で入力してください。", danger=True)
+        if val < 0 or val > 5999:
+            self._show_notice_dialog("入力エラー", "範囲外です", "0〜5999の範囲で入力してください。", danger=True)
             return
 
         self.presets.append(val)
-        self.presets.sort()
         self.save_config()
         self.refresh_tray_menu()
         self.root.withdraw()
@@ -1568,10 +1577,17 @@ class OverlayApp:
     def setup_hooks(self):
         keyboard.unhook_all()
         mouse.unhook_all()
+        self.pressed_key_scan_codes.clear()
         keyboard.hook(self._on_key_event)
         mouse.hook(self._on_mouse_event)
 
     def _on_key_event(self, e):
+        if e.event_type == "up":
+            self.pressed_key_scan_codes.discard(e.scan_code)
+            return
+        is_repeat = e.scan_code in self.pressed_key_scan_codes
+        if e.event_type == "down":
+            self.pressed_key_scan_codes.add(e.scan_code)
         if not self.hotkey_enabled or e.event_type != "down":
             return
 
@@ -1584,7 +1600,15 @@ class OverlayApp:
             return
 
         current_combination = self._current_hotkey_combination(key_name)
-        action = self._hotkey_action_map().get(self._find_action_id(current_combination))
+        action_id = self._find_action_id(current_combination)
+        if (
+            action_id == "add_timer"
+            and is_repeat
+            and self.presets
+            and self.presets[self.selected_preset_index] == 0
+        ):
+            return
+        action = self._hotkey_action_map().get(action_id)
         if action:
             self.overlay.after(0, action)
 
@@ -1617,7 +1641,7 @@ class OverlayApp:
         return {
             "reset_timer": self.reset_selected_timer,
             "reset_all_timers": self.reset_timer,
-            "add_timer": lambda: self.add_timer(self.presets[self.selected_preset_index]),
+            "add_timer": self.start_selected_preset,
             "inc_counter1": lambda: self.increment_counter(1),
             "dec_counter1": lambda: self.decrement_counter(1),
             "reset_counter1": lambda: self.reset_specific_counter(1),
@@ -1640,9 +1664,15 @@ class OverlayApp:
             self.is_typing_mode = False
             self.overlay.after(0, self.draw_timer)
 
-    def move_cursor(self):
-        valid_indices = [0] if self.is_counting else []
+    def _reset_cursor_indices(self):
+        valid_indices = [STOPWATCH_CURSOR_INDEX] if self.stopwatch_started_at is not None else []
+        if self.is_counting:
+            valid_indices.append(0)
         valid_indices += [i + 1 for i in range(len(self.timers))]
+        return valid_indices
+
+    def move_cursor(self):
+        valid_indices = self._reset_cursor_indices()
 
         if not valid_indices:
             self.selected_cursor_index = 0
@@ -1660,8 +1690,7 @@ class OverlayApp:
         self.draw_timer()
 
     def validate_cursor_position(self):
-        valid_indices = [0] if self.is_counting else []
-        valid_indices += [i + 1 for i in range(len(self.timers))]
+        valid_indices = self._reset_cursor_indices()
 
         if not valid_indices:
             self.selected_cursor_index = 0
@@ -1771,7 +1800,16 @@ class OverlayApp:
         return f"{base_text} [{hotkey if hotkey else '未設定'}]"
 
     def _format_preset_label(self, seconds):
+        if seconds == 0:
+            return "0秒（ストップウォッチ）"
         return f"{seconds // 60}分{seconds % 60}秒" if seconds % 60 else f"{seconds // 60}分"
+
+    def _preset_input_description(self):
+        start_key = self.hotkey_config.get("add_timer", "").upper() or "開始キー（未設定）"
+        reset_key = self.hotkey_config.get("reset_timer", "").upper() or "リセットキー（未設定）"
+        return (
+            "0〜5999秒で入力してください。0秒はストップウォッチになります。"
+        )
 
     def setup_tray(self):
         try:
@@ -1867,6 +1905,12 @@ class OverlayApp:
             )
             draw_y += self.base_timer_spacing * s
 
+        if self.stopwatch_started_at is not None:
+            if self.selected_cursor_index == STOPWATCH_CURSOR_INDEX:
+                self._draw_image(bx + (self.cursor_offset_x * s), draw_y - 1 * s, "cursor")
+            self._render_stopwatch_time_images(bx + (self.timer_offset_x * s), draw_y)
+            draw_y += self.base_timer_spacing * s
+
         if self.is_counting:
             if self.selected_cursor_index == 0:
                 self._draw_image(bx + (self.cursor_offset_x * s), draw_y - 1 * s, "cursor")
@@ -1893,9 +1937,7 @@ class OverlayApp:
 
     def _time_digits(self, total_seconds):
         mins, secs = divmod(total_seconds, 60)
-        m1, m2 = divmod(mins, 10)
-        s1, s2 = divmod(secs, 10)
-        return [str(m1), str(m2), "colon", str(s1), str(s2)]
+        return list(f"{mins:02d}") + ["colon"] + list(f"{secs:02d}")
 
     def _draw_digit_row(self, x, y, image_names, offsets):
         s = self.get_effective_scale()
@@ -1905,21 +1947,46 @@ class OverlayApp:
     def _render_feather_time_images(self, total_seconds, x, y):
         s = self.get_effective_scale()
         self._draw_image(x - 1 * s, y - 1 * s, "feather")
-        self._draw_digit_row(x, y, self._time_digits(total_seconds), [11, 18, 25, 32, 39])
+        digits = self._time_digits(total_seconds)
+        self._draw_digit_row(x, y, digits, [11 + i * 7 for i in range(len(digits))])
 
     def _render_select_time_images(self, total_seconds, x, y):
         s = self.get_effective_scale()
         self._draw_image(x + 2 * s, y - 1 * s, "left")
+        digits = self._time_digits(total_seconds)
         self._draw_digit_row(
             x,
             y,
-            self._time_digits(total_seconds) + ["right"],
-            [11, 18, 25, 32, 39, 48],
+            digits + ["right"],
+            [11 + i * 7 for i in range(len(digits))] + [13 + len(digits) * 7],
         )
 
     def _render_time_images(self, total_seconds, x, y):
         self._draw_image(x, y, "clock")
-        self._draw_digit_row(x, y, self._time_digits(total_seconds), [11, 18, 25, 32, 39])
+        digits = self._time_digits(total_seconds)
+        self._draw_digit_row(x, y, digits, [11 + i * 7 for i in range(len(digits))])
+
+    def _render_stopwatch_time_images(self, x, y):
+        s = self.get_effective_scale()
+        self._draw_image(x - 1 * s, y - 1 * s, "stopwatch")
+        digits = self._time_digits(self.stopwatch_elapsed_seconds())
+        self._draw_digit_row(x, y, digits, [11 + i * 7 for i in range(len(digits))])
+        lap_x = x + (11 + len(digits) * 7 + 4) * s
+
+        # Keep the newest laps visible on the same row when the window fills up.
+        available_width = max(0, self.canvas.winfo_width() - lap_x)
+        visible_laps = []
+        for lap in reversed(self.stopwatch_laps):
+            lap_digits = self._time_digits(int(lap))
+            lap_width = (9 + len(lap_digits) * 7 + 4) * s
+            if lap_width > available_width:
+                break
+            visible_laps.append((lap_digits, lap_width))
+            available_width -= lap_width
+        for lap_digits, lap_width in reversed(visible_laps):
+            self._draw_image(lap_x, y - 1 * s, "slash")
+            self._draw_digit_row(lap_x, y, lap_digits, [9 + i * 7 for i in range(len(lap_digits))])
+            lap_x += lap_width
 
     def _render_counter_images(self, c1, c2, x, y):
         s = self.get_effective_scale()
@@ -2124,8 +2191,40 @@ class OverlayApp:
             self._schedule_icon_check()
 
     # ------------------------------------------------------------------
-    # Timers and counters
+    # Timers, stopwatch and counters
     # ------------------------------------------------------------------
+
+    def start_selected_preset(self):
+        if self.presets:
+            self.add_timer(self.presets[self.selected_preset_index])
+
+    def start_or_lap_stopwatch(self):
+        now = time.monotonic()
+        if self.stopwatch_started_at is None:
+            self.stopwatch_started_at = now
+            self.stopwatch_last_lap_at = now
+            self.stopwatch_laps = []
+            self.selected_cursor_index = STOPWATCH_CURSOR_INDEX
+            self.play_sound("timer_start")
+        else:
+            self.stopwatch_laps.append(now - self.stopwatch_last_lap_at)
+            self.stopwatch_laps = self.stopwatch_laps[-MAX_STOPWATCH_LAPS:]
+            self.stopwatch_last_lap_at = now
+            self.play_sound("rap")
+        if not self.tick_id:
+            self.tick_timer()
+        else:
+            self.draw_timer()
+
+    def stopwatch_elapsed_seconds(self):
+        if self.stopwatch_started_at is None:
+            return 0
+        return max(0, int(time.monotonic() - self.stopwatch_started_at))
+
+    def _clear_stopwatch(self):
+        self.stopwatch_started_at = None
+        self.stopwatch_last_lap_at = None
+        self.stopwatch_laps = []
 
     def start_countdown(self, seconds):
         self.play_sound("timer_start")
@@ -2137,6 +2236,9 @@ class OverlayApp:
             self.tick_timer()
 
     def add_timer(self, seconds):
+        if seconds == 0:
+            self.start_or_lap_stopwatch()
+            return
         if len(self.timers) >= self.max_timers:
             self.play_sound("cancel")
             return
@@ -2146,7 +2248,10 @@ class OverlayApp:
             self.tick_timer()
 
     def reset_selected_timer(self):
-        if self.selected_cursor_index == 0 and self.is_counting:
+        if self.selected_cursor_index == STOPWATCH_CURSOR_INDEX and self.stopwatch_started_at is not None:
+            self._clear_stopwatch()
+            self.play_sound("reset")
+        elif self.selected_cursor_index == 0 and self.is_counting:
             self.feather_timer = 0
             self.is_counting = False
             self.current_icon_index = -1
@@ -2160,13 +2265,14 @@ class OverlayApp:
         self.draw_timer()
 
     def reset_timer(self):
-        if not (self.is_counting or self.timers):
+        if not (self.is_counting or self.timers or self.stopwatch_started_at is not None):
             return
 
         self.play_sound("reset")
         self.feather_timer = 0
         self.is_counting = False
         self.timers = []
+        self._clear_stopwatch()
         self.current_icon_index = -1
         self.selected_cursor_index = 0
         if self.tick_id:
@@ -2176,7 +2282,7 @@ class OverlayApp:
 
     def tick_timer(self):
         now = time.time()
-        any_running = False
+        any_running = self.stopwatch_started_at is not None
 
         if self.is_counting:
             rem = int(self.target_time - now)
