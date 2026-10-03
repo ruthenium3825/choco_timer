@@ -221,7 +221,7 @@ class OverlayApp:
         self.icon_width = 10
         self.icon_height = 10
         self.icon_gap = 2
-        self.icon_slot_count = 20
+        self.icon_slot_count = 25
         self.icon_check_interval_ms = ICON_CHECK_INTERVAL_MS
 
     def _init_state(self):
@@ -1788,7 +1788,7 @@ class OverlayApp:
             item("ショートカットキー有効", self.toggle_hotkeys, checked=lambda _: self.hotkey_enabled),
             item("タイピングモード有効", self.toggle_typing_mode, checked=lambda _: self.typing_mode_enabled),
             item("タイマー自動スタート有効", self.toggle_auto_start, checked=lambda _: self.auto_start_enabled),
-            item("カウンターを表示", self.toggle_counter, checked=lambda _: self.counter_enabled),
+            item("カウンター機能有効", self.toggle_counter, checked=lambda _: self.counter_enabled),
             pystray.Menu.SEPARATOR,
             item("効果音を再生", self.toggle_sound, checked=lambda _: self.sound_enabled),
             item("音量設定...", self._tray_action(self.request_show_volume_dialog)),
@@ -1901,7 +1901,7 @@ class OverlayApp:
             )
 
         draw_y += self.base_timer_spacing * s
-        if self.counter_enabled:
+        if self.counter_enabled and (self.counter1 or self.counter2):
             self._render_counter_images(
                 self.counter1,
                 self.counter2,
@@ -2083,7 +2083,7 @@ class OverlayApp:
             return True
 
     def _get_icon_search_regions(self):
-        # Capture once, then compare only the 20 fixed icon slots inside this strip.
+        # Capture once, then compare only the fixed icon slots inside this strip.
         width = self.icon_slot_count * self.icon_width + (self.icon_slot_count - 1) * self.icon_gap
         return [{"src_rect": (self.icon_search_x, self.icon_search_y, width, self.icon_height)}]
 
