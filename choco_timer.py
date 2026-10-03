@@ -25,6 +25,7 @@ from tkinter import messagebox, ttk
 import tkinter as tk
 
 
+APP_VERSION = "1.1.1"
 CONFIG_FILE = "config.json"
 DEFAULT_PRESETS = [300, 600, 1800, 3600, 0]
 STOPWATCH_CURSOR_INDEX = -1
@@ -1817,7 +1818,7 @@ class OverlayApp:
             self.tray_icon = pystray.Icon(
                 "choco_timer",
                 icon_img,
-                "チョコットタイマー",
+                f"チョコットタイマー v{APP_VERSION}",
                 menu=self.create_tray_menu(),
             )
             threading.Thread(target=self.tray_icon.run, daemon=True).start()

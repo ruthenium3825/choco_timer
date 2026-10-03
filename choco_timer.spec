@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
 
 a = Analysis(
     ['choco_timer.py'],
@@ -36,4 +37,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['images/choco_timer.ico'],
+    version=str(Path(SPECPATH) / 'version_info.txt'),
 )
