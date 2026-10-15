@@ -163,3 +163,9 @@ python choco_timer.py
 # exeを生成する場合
 pyinstaller --clean choco_timer.spec
 ```
+
+## 謝辞・参考プロジェクト
+
+マネキン切替機能の開発にあたり、wagowa5氏の
+[PuretomoAuto](https://github.com/wagowa5/PuretomoAuto)
+を参考にしました。
