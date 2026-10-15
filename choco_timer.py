@@ -2,6 +2,7 @@ import ctypes
 from ctypes import wintypes
 import json
 import math
+import multiprocessing
 import os
 import queue
 import sys
@@ -24,8 +25,10 @@ from pystray import MenuItem as item
 from tkinter import messagebox, ttk
 import tkinter as tk
 
+from avatar_closet import AvatarCloset
 
-APP_VERSION = "1.1.1"
+
+APP_VERSION = "1.2.0"
 CONFIG_FILE = "config.json"
 DEFAULT_PRESETS = [300, 600, 1800, 3600, 0]
 STOPWATCH_CURSOR_INDEX = -1
@@ -78,6 +81,10 @@ HOTKEY_ACTION_LABELS = [
     ("inc_counter2", "カウンター2 +1"),
     ("dec_counter2", "カウンター2 -1"),
     ("reset_counter2", "カウンター2 リセット"),
+    None,
+    ("prev_mannequin", "マネキン選択（戻る）"),
+    ("next_mannequin", "マネキン選択（進む）"),
+    ("save_mannequin", "マネキンの着替え保存"),
 ]
 
 HOTKEY_LABEL_MAP = {
@@ -176,6 +183,7 @@ class OverlayApp:
 
         self._create_root_and_overlay()
         self._load_assets_and_templates()
+        self.avatar_closet = AvatarCloset(self, resource_path("avatar_title.dat", "images"))
         self.setup_hooks()
 
         self.tray_icon = None
@@ -183,6 +191,7 @@ class OverlayApp:
 
         self.update_overlay()
         self.check_icon_loop()
+        self.check_avatar_button_loop()
         self.process_queue()
 
     # ------------------------------------------------------------------
@@ -233,6 +242,7 @@ class OverlayApp:
         self.stopwatch_last_lap_at = None
         self.stopwatch_laps = []
         self.pressed_key_scan_codes = set()
+        self.pressed_key_names = {}
         self.counter1 = 0
         self.counter2 = 0
         self.target_hwnd = None
@@ -306,6 +316,7 @@ class OverlayApp:
         self.auto_start_enabled = True
         self.hotkey_enabled = True
         self.typing_mode_enabled = True
+        self.avatar_closet_enabled = True
 
         if not os.path.exists(CONFIG_FILE):
             return
@@ -322,6 +333,7 @@ class OverlayApp:
         self.auto_start_enabled = saved_data.get("auto_start", True)
         self.hotkey_enabled = saved_data.get("hotkey_enabled", True)
         self.typing_mode_enabled = saved_data.get("typing_mode_enabled", True)
+        self.avatar_closet_enabled = saved_data.get("avatar_closet_enabled", True)
         self.scale = saved_data.get("scale", 1.0)
         self.origin_y = saved_data.get("origin_y", 114)
         self.presets = saved_data.get("presets", list(DEFAULT_PRESETS))
@@ -352,6 +364,7 @@ class OverlayApp:
             "auto_start": self.auto_start_enabled,
             "hotkey_enabled": self.hotkey_enabled,
             "typing_mode_enabled": self.typing_mode_enabled,
+            "avatar_closet_enabled": self.avatar_closet_enabled,
             "scale": self.scale,
             "origin_y": self.origin_y,
             "presets": self.presets,
@@ -625,6 +638,16 @@ class OverlayApp:
             self._execute_add_preset()
         elif task_type == "show_volume_dialog":
             self._execute_show_volume_dialog()
+        elif task_type == "closet_refresh":
+            self.avatar_closet.refresh()
+        elif task_type == "closet_show":
+            self.avatar_closet.show_browser()
+        elif task_type == "closet_toggle":
+            self.avatar_closet_enabled = not self.avatar_closet_enabled
+            if not self.avatar_closet_enabled:
+                self.avatar_closet.hide()
+            self.save_config()
+            self.refresh_tray_menu()
 
     def _hotkey_action_label(self, key_id):
         return HOTKEY_LABEL_MAP.get(key_id, key_id)
@@ -1579,16 +1602,19 @@ class OverlayApp:
         keyboard.unhook_all()
         mouse.unhook_all()
         self.pressed_key_scan_codes.clear()
+        self.pressed_key_names.clear()
         keyboard.hook(self._on_key_event)
         mouse.hook(self._on_mouse_event)
 
     def _on_key_event(self, e):
         if e.event_type == "up":
             self.pressed_key_scan_codes.discard(e.scan_code)
+            self.pressed_key_names.pop(e.scan_code, None)
             return
         is_repeat = e.scan_code in self.pressed_key_scan_codes
         if e.event_type == "down":
             self.pressed_key_scan_codes.add(e.scan_code)
+            self.pressed_key_names[e.scan_code] = (e.name or "").lower()
         if not self.hotkey_enabled or e.event_type != "down":
             return
 
@@ -1602,6 +1628,8 @@ class OverlayApp:
 
         current_combination = self._current_hotkey_combination(key_name)
         action_id = self._find_action_id(current_combination)
+        if action_id in {"prev_mannequin", "next_mannequin", "save_mannequin"} and is_repeat:
+            return
         if (
             action_id == "add_timer"
             and is_repeat
@@ -1623,13 +1651,12 @@ class OverlayApp:
                 self.overlay.after(0, self.draw_timer)
 
     def _current_hotkey_combination(self, key_name):
+        # Hooks are queued: the OS key state may already reflect Ctrl being released.
+        pressed = set(self.pressed_key_names.values())
         mods = []
-        if keyboard.is_pressed("ctrl"):
-            mods.append("ctrl")
-        if keyboard.is_pressed("shift"):
-            mods.append("shift")
-        if keyboard.is_pressed("alt"):
-            mods.append("alt")
+        for modifier in ("ctrl", "shift", "alt"):
+            if pressed & {modifier, "left " + modifier, "right " + modifier}:
+                mods.append(modifier)
         return "+".join(mods + [key_name]) if mods else key_name
 
     def _find_action_id(self, current_combination):
@@ -1652,7 +1679,19 @@ class OverlayApp:
             "prev_preset": self.cycle_preset_prev,
             "next_preset": self.cycle_preset_next,
             "move_cursor": self.move_cursor,
+            "prev_mannequin": lambda: self._avatar_hotkey("prev"),
+            "next_mannequin": lambda: self._avatar_hotkey("next"),
+            "save_mannequin": lambda: self._avatar_hotkey("save"),
         }
+
+    def _avatar_hotkey(self, action):
+        if (not self.avatar_closet_enabled or not self.hotkey_enabled or self.is_typing_mode
+                or not self.is_target_foreground_exact() or not self.avatar_closet.visible):
+            return
+        if action == "save":
+            self.avatar_closet.save()
+        else:
+            self.avatar_closet.cycle(-1 if action == "prev" else 1)
 
     def _on_mouse_event(self, e):
         if not isinstance(e, mouse.ButtonEvent):
@@ -1749,6 +1788,12 @@ class OverlayApp:
         return pystray.Menu(
             item("ショートカットキー設定", pystray.Menu(*hotkey_settings_items)),
             item("タイマープリセット編集", pystray.Menu(*preset_items)),
+            item("クローゼット連携", pystray.Menu(
+                item("マネキン切替を有効", self._tray_action(self._enqueue, "closet_toggle"),
+                     checked=lambda _: self.avatar_closet_enabled),
+                item("ログイン／一覧を更新...", self._tray_action(self._enqueue, "closet_refresh")),
+                item("クローゼットを開く...", self._tray_action(self._enqueue, "closet_show")),
+            )),
             pystray.Menu.SEPARATOR,
             item(
                 "表示サイズ",
@@ -2030,8 +2075,9 @@ class OverlayApp:
         self.not_found_start_time = None
         self.update_dpi_scale_for_target()
 
-        if self.is_target_minimized() or not self.is_target_foreground_exact():
+        if self.is_target_minimized() or not (self.is_target_foreground_exact() or self.avatar_closet.contains_foreground()):
             self.overlay.withdraw()
+            self.avatar_closet.hide()
             if self.is_typing_mode:
                 self.is_typing_mode = False
             return
@@ -2043,8 +2089,33 @@ class OverlayApp:
         self.overlay.geometry(f"{width}x{height}+{left}+{top}")
         self.draw_timer()
         self.overlay.deiconify()
+        if self.avatar_closet_enabled:
+            self.avatar_closet.place(left, top, right, bottom, maximized=self.is_target_maximized())
+
+    def check_avatar_button_loop(self):
+        try:
+            if not (self.avatar_closet_enabled and self.target_hwnd and win32gui.IsWindow(self.target_hwnd)):
+                self.avatar_closet.hide()
+                return
+            if self.is_target_minimized() or not (self.is_target_foreground_exact() or self.avatar_closet.contains_foreground()):
+                return
+            left, top, right, bottom = self.get_window_rect(self.target_hwnd)
+            frame = self._capture_windowdc_region_bgr(0, 0, right - left, bottom - top)
+            if frame is not None:
+                self.avatar_closet.detect(frame)
+            else:
+                self.avatar_closet.match = None
+                self.avatar_closet.hide()
+        except Exception as error:
+            self.avatar_closet.match = None
+            self.avatar_closet.hide()
+            print(f"Avatar button detection error: {error}")
+        finally:
+            self.root.after(500, self.check_avatar_button_loop)
 
     def _handle_target_not_found(self):
+        self.avatar_closet.match = None
+        self.avatar_closet.hide()
         if self.not_found_start_time is None:
             self.not_found_start_time = time.time()
         if time.time() - self.not_found_start_time > AUTO_QUIT_AFTER_SECONDS:
@@ -2081,6 +2152,17 @@ class OverlayApp:
             return placement[1] == win32con.SW_SHOWMINIMIZED
         except Exception:
             return True
+
+    def is_target_maximized(self):
+        try:
+            if win32gui.GetWindowPlacement(self.target_hwnd)[1] == win32con.SW_SHOWMAXIMIZED:
+                return True
+            monitor = win32api.MonitorFromWindow(self.target_hwnd, win32con.MONITOR_DEFAULTTONEAREST)
+            ml, mt, mr, mb = win32api.GetMonitorInfo(monitor)["Monitor"]
+            left, top, right, bottom = self.get_window_rect(self.target_hwnd)
+            return left <= ml + 2 and top <= mt + 2 and right >= mr - 2 and bottom >= mb - 2
+        except Exception:
+            return False
 
     def _get_icon_search_regions(self):
         # Capture once, then compare only the fixed icon slots inside this strip.
@@ -2391,6 +2473,7 @@ class OverlayApp:
         self._enqueue("show_volume_dialog")
 
     def quit_app(self, icon=None, menu_item=None):
+        self.avatar_closet.close()
         if self.tray_icon:
             self.tray_icon.stop()
         pygame.mixer.quit()
@@ -2401,6 +2484,7 @@ class OverlayApp:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     enable_dpi_awareness()
 
     default_hotkeys = {
@@ -2416,6 +2500,9 @@ if __name__ == "__main__":
         "inc_counter2": "x",
         "dec_counter2": "shift+x",
         "reset_counter2": "ctrl+x",
+        "prev_mannequin": "ctrl+,",
+        "next_mannequin": "ctrl+.",
+        "save_mannequin": "f",
     }
 
     app = OverlayApp(

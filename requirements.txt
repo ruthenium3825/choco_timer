@@ -1,0 +1,9 @@
+keyboard
+mouse
+numpy
+Pillow
+pygame
+pystray
+pywin32; sys_platform == 'win32'
+pywebview>=6.0,<7
+pyinstaller>=6
